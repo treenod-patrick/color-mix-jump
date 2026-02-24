@@ -167,7 +167,7 @@ class GameScene extends Phaser.Scene {
   }
 
   createPlatform(x, y, color, isStart = false, isGoal = false) {
-    const width = isGoal ? 100 : (isStart ? 120 : 80);
+    const width = isGoal ? 110 : (isStart ? 130 : 100);
     const height = 22;
 
     const container = this.add.container(x, y);
@@ -213,8 +213,6 @@ class GameScene extends Phaser.Scene {
     // Physics body
     const zone = this.add.zone(x, y, width, height);
     this.physics.add.existing(zone, true);
-    zone.body.setSize(width, height * 0.6);
-    zone.body.setOffset(-width / 2, -height * 0.3);
     zone.platformColor = color;
     zone.isGoal = isGoal;
     zone.container = container;
@@ -316,8 +314,8 @@ class GameScene extends Phaser.Scene {
   }
 
   onPlatformLand(player, platform) {
-    // Only land from above
-    if (player.body.velocity.y <= 0) return;
+    // Only land from above (velocity.y가 0일 때는 착지 상태이므로 허용)
+    if (player.body.velocity.y < 0) return;
 
     this.hasLanded = true;
 
@@ -569,6 +567,8 @@ class GameScene extends Phaser.Scene {
       this.player.body.setVelocityX(-MOVE_SPEED);
     } else if (this.cursors.right.isDown) {
       this.player.body.setVelocityX(MOVE_SPEED);
+    } else if (!this.input.activePointer.isDown) {
+      this.player.body.setVelocityX(0);
     }
 
     // Keyboard jump
