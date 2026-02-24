@@ -6,7 +6,7 @@
 <title>Color Mix Jump</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; touch-action: none; }
 #game-container { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
 canvas { display: block; max-width: 100%; max-height: 100%; }
 </style>
@@ -16,789 +16,608 @@ canvas { display: block; max-width: 100%; max-height: 100%; }
 <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 <script>
 // === Color Mix Jump ===
-// Hyper-casual game: jump on colored platforms to mix RYB colors and match the target!
+// Doodle Jump style hyper-casual: bounce on colored platforms, mix RYB colors, match the target!
 
-const GAME_WIDTH = 400;
-const GAME_HEIGHT = 700;
-const PLATFORM_COUNT = 8;
-const PLATFORM_SPACING_MIN = 80;
-const PLATFORM_SPACING_MAX = 130;
-const JUMP_VELOCITY = -550;
-const GRAVITY = 800;
-const MOVE_SPEED = 200;
+const GW = 400;
+const GH = 700;
+const PLAT_COUNT = 10;
+const JUMP_VEL = -620;
+const GRAVITY = 900;
+const MOVE_SPEED = 280;
 
 // RYB color system
-const COLORS = {
+const C = {
   red:    { hex: 0xff6b6b, name: '빨강', css: '#ff6b6b' },
   yellow: { hex: 0xffd43b, name: '노랑', css: '#ffd43b' },
   blue:   { hex: 0x339af0, name: '파랑', css: '#339af0' },
-  // Mixed colors
-  orange: { hex: 0xff9f43, name: '주황', css: '#ff9f43' },
+  orange: { hex: 0xff922b, name: '주황', css: '#ff922b' },
   green:  { hex: 0x51cf66, name: '초록', css: '#51cf66' },
-  purple: { hex: 0xcc5de8, name: '보라', css: '#cc5de8' },
-  // Neutral
-  none:   { hex: 0xcccccc, name: '무색', css: '#cccccc' },
+  purple: { hex: 0xbe4bdb, name: '보라', css: '#be4bdb' },
+  none:   { hex: 0xdddddd, name: '무색', css: '#dddddd' },
   muddy:  { hex: 0x8b7355, name: '탁한색', css: '#8b7355' },
 };
 
-const PRIMARY_COLORS = ['red', 'yellow', 'blue'];
+const PRIMARIES = ['red', 'yellow', 'blue'];
 
-// RYB mixing rules
-function mixColors(color1, color2) {
-  if (color1 === 'none') return color2;
-  if (color2 === 'none') return color1;
-  if (color1 === color2) return color1;
-
-  const pair = [color1, color2].sort().join('+');
-  const mixMap = {
-    'blue+red': 'purple',
-    'red+yellow': 'orange',
-    'blue+yellow': 'green',
-  };
-
-  return mixMap[pair] || 'muddy';
+function mixColors(c1, c2) {
+  if (c1 === 'none') return c2;
+  if (c2 === 'none') return c1;
+  if (c1 === c2) return c1;
+  const pair = [c1, c2].sort().join('+');
+  return { 'blue+red': 'purple', 'red+yellow': 'orange', 'blue+yellow': 'green' }[pair] || 'muddy';
 }
 
-// Stages: each has a target color
 const STAGES = [
-  { target: 'purple', hint: '빨강 + 파랑', stageNum: 1 },
-  { target: 'orange', hint: '빨강 + 노랑', stageNum: 2 },
-  { target: 'green',  hint: '파랑 + 노랑', stageNum: 3 },
-  { target: 'purple', hint: '빨강 + 파랑', stageNum: 4, harder: true },
-  { target: 'orange', hint: '빨강 + 노랑', stageNum: 5, harder: true },
-  { target: 'green',  hint: '파랑 + 노랑', stageNum: 6, harder: true },
+  { target: 'purple', hint: '빨강 + 파랑', num: 1 },
+  { target: 'orange', hint: '빨강 + 노랑', num: 2 },
+  { target: 'green',  hint: '파랑 + 노랑', num: 3 },
+  { target: 'purple', hint: '빨강 + 파랑', num: 4, hard: true },
+  { target: 'orange', hint: '빨강 + 노랑', num: 5, hard: true },
+  { target: 'green',  hint: '파랑 + 노랑', num: 6, hard: true },
 ];
 
+// ─── GAME SCENE ───
 class GameScene extends Phaser.Scene {
-  constructor() {
-    super({ key: 'GameScene' });
-  }
+  constructor() { super('GameScene'); }
 
   init(data) {
-    this.stageIndex = data.stageIndex || 0;
+    this.stageIdx = data.stageIdx || 0;
     this.score = data.score || 0;
     this.combo = data.combo || 0;
   }
 
   create() {
-    const stage = STAGES[this.stageIndex % STAGES.length];
-    this.currentStage = stage;
+    this.stage = STAGES[this.stageIdx % STAGES.length];
     this.playerColor = 'none';
-    this.isGameOver = false;
-    this.hasLanded = false;
-    this.highestY = GAME_HEIGHT;
+    this.gameOver = false;
+    this.cameraMinY = 0; // camera only scrolls up
 
-    // Pastel gradient background
-    this.createBackground();
+    this.drawBackground();
+    this.drawStars();
 
-    // Floating particles
-    this.createParticles();
-
-    // Platforms group
+    // Platform group (static)
     this.platforms = this.physics.add.staticGroup();
+    this.platformVisuals = [];
 
-    // Starting platform (neutral)
-    this.createPlatform(GAME_WIDTH / 2, GAME_HEIGHT - 80, 'none', true);
+    // Starting platform (wide, neutral)
+    this.addPlatform(GW / 2, GH - 80, 'none', 130);
 
     // Generate colored platforms going up
-    this.generatePlatforms();
+    this.topPlatY = GH - 80;
+    for (let i = 0; i < PLAT_COUNT; i++) {
+      const gap = this.stage.hard ? Phaser.Math.Between(100, 145) : Phaser.Math.Between(85, 125);
+      this.topPlatY -= gap;
+      const px = Phaser.Math.Between(55, GW - 55);
+      this.addPlatform(px, this.topPlatY, Phaser.Math.RND.pick(PRIMARIES), 80);
+    }
 
-    // Goal platform at top
-    this.goalY = this.highestPlatformY - 120;
-    this.goalPlatform = this.createPlatform(GAME_WIDTH / 2, this.goalY, 'goal', false, true);
+    // Goal platform
+    this.topPlatY -= 130;
+    this.goalPlat = this.addPlatform(GW / 2, this.topPlatY, 'goal', 110);
 
-    // Player (slime)
-    this.createPlayer();
+    // Player
+    this.createPlayer(GW / 2, GH - 115);
 
-    // Physics
-    this.physics.add.collider(this.player, this.platforms, this.onPlatformLand, null, this);
+    // Collider
+    this.physics.add.collider(this.player, this.platforms, this.onLand, null, this);
 
     // Controls
-    this.setupControls();
+    this.setupInput();
 
-    // UI
-    this.createUI(stage);
+    // UI (fixed to camera)
+    this.createUI();
 
-    // Camera follows player upward
-    this.cameras.main.setBounds(0, this.goalY - 200, GAME_WIDTH, GAME_HEIGHT - this.goalY + 400);
-    this.cameras.main.startFollow(this.player, false, 0, 0.1, 0, 100);
-
-    // Death zone at bottom
-    this.deathY = GAME_HEIGHT + 100;
+    // Camera
+    this.cameras.main.setBounds(0, this.topPlatY - 300, GW, GH - this.topPlatY + 600);
+    this.cameraMinY = this.cameras.main.scrollY;
   }
 
-  createBackground() {
-    const bg = this.add.graphics();
-    // Gradient from lavender to sky blue
-    for (let i = 0; i < GAME_HEIGHT * 3; i++) {
-      const t = i / (GAME_HEIGHT * 3);
-      const r = Phaser.Math.Interpolation.Linear([224, 142], t);
-      const g = Phaser.Math.Interpolation.Linear([195, 197], t);
-      const b = Phaser.Math.Interpolation.Linear([252, 252], t);
-      bg.fillStyle(Phaser.Display.Color.GetColor(r, g, b), 1);
-      bg.fillRect(0, -GAME_HEIGHT * 2 + i, GAME_WIDTH, 1);
+  // ── Background ──
+  drawBackground() {
+    const g = this.add.graphics();
+    const totalH = GH * 4;
+    for (let i = 0; i < totalH; i++) {
+      const t = i / totalH;
+      const r = Math.round(Phaser.Math.Interpolation.Linear([230, 180, 140], t));
+      const gv = Math.round(Phaser.Math.Interpolation.Linear([200, 190, 200], t));
+      const b = Math.round(Phaser.Math.Interpolation.Linear([255, 240, 255], t));
+      g.fillStyle(Phaser.Display.Color.GetColor(r, gv, b));
+      g.fillRect(0, -GH * 3 + i, GW, 1);
     }
-    bg.setScrollFactor(0.3);
+    g.setScrollFactor(0.3);
 
-    // Clouds
-    for (let i = 0; i < 8; i++) {
-      const cx = Phaser.Math.Between(30, GAME_WIDTH - 30);
-      const cy = Phaser.Math.Between(-GAME_HEIGHT, GAME_HEIGHT);
-      const cloud = this.add.ellipse(cx, cy, Phaser.Math.Between(60, 140), Phaser.Math.Between(30, 60), 0xffffff, 0.25);
-      cloud.setScrollFactor(0.2);
+    for (let i = 0; i < 10; i++) {
+      const cloud = this.add.ellipse(
+        Phaser.Math.Between(20, GW - 20),
+        Phaser.Math.Between(-GH * 2, GH),
+        Phaser.Math.Between(80, 160),
+        Phaser.Math.Between(30, 60),
+        0xffffff, 0.2
+      );
+      cloud.setScrollFactor(0.15);
     }
   }
 
-  createParticles() {
-    // Sparkle stars
-    for (let i = 0; i < 20; i++) {
-      const x = Phaser.Math.Between(10, GAME_WIDTH - 10);
-      const y = Phaser.Math.Between(-GAME_HEIGHT * 2, GAME_HEIGHT);
-      const star = this.add.circle(x, y, Phaser.Math.Between(1, 3), 0xffffff, Phaser.Math.FloatBetween(0.3, 0.8));
-      star.setScrollFactor(0.4);
+  drawStars() {
+    for (let i = 0; i < 25; i++) {
+      const s = this.add.circle(
+        Phaser.Math.Between(5, GW - 5),
+        Phaser.Math.Between(-GH * 3, GH),
+        Phaser.Math.Between(1, 3),
+        0xffffff,
+        Phaser.Math.FloatBetween(0.2, 0.7)
+      );
+      s.setScrollFactor(0.35);
       this.tweens.add({
-        targets: star,
-        alpha: { from: star.alpha, to: 0.1 },
-        duration: Phaser.Math.Between(1000, 3000),
-        yoyo: true,
-        repeat: -1,
+        targets: s, alpha: 0.05,
+        duration: Phaser.Math.Between(800, 2500),
+        yoyo: true, repeat: -1,
       });
     }
   }
 
-  createPlatform(x, y, color, isStart = false, isGoal = false) {
-    const width = isGoal ? 100 : (isStart ? 120 : 80);
-    const height = 22;
+  // ── Platform ──
+  addPlatform(x, y, color, w) {
+    const h = 20;
+    const isGoal = color === 'goal';
 
-    const container = this.add.container(x, y);
+    // Visual container (purely cosmetic)
+    const vis = this.add.container(x, y);
 
     if (isGoal) {
-      // Goal platform — shows target color
-      const targetColor = COLORS[this.currentStage.target];
-      const glow = this.add.ellipse(0, 0, width + 20, height + 16, targetColor.hex, 0.3);
-      const body = this.add.ellipse(0, 0, width, height, targetColor.hex, 0.9);
-      const shine = this.add.ellipse(0, -4, width * 0.7, height * 0.4, 0xffffff, 0.35);
-      const star = this.add.text(0, -24, '★', { fontSize: '18px', color: targetColor.css }).setOrigin(0.5);
-      container.add([glow, body, shine, star]);
-
-      this.tweens.add({
-        targets: glow,
-        scaleX: 1.15,
-        scaleY: 1.15,
-        alpha: 0.15,
-        duration: 800,
-        yoyo: true,
-        repeat: -1,
-      });
+      const tgt = C[this.stage.target];
+      const glow = this.add.ellipse(0, 0, w + 24, h + 18, tgt.hex, 0.25);
+      const body = this.add.ellipse(0, 0, w, h, tgt.hex, 0.9);
+      const shine = this.add.ellipse(0, -3, w * 0.65, h * 0.35, 0xffffff, 0.35);
+      const star = this.add.text(0, -22, '★', { fontSize: '20px', color: tgt.css }).setOrigin(0.5);
+      vis.add([glow, body, shine, star]);
+      this.tweens.add({ targets: glow, scaleX: 1.2, scaleY: 1.2, alpha: 0.1, duration: 900, yoyo: true, repeat: -1 });
     } else {
-      // Normal platform
-      const colorData = color === 'none' ? { hex: 0xdddddd } : COLORS[color];
-      const body = this.add.ellipse(0, 0, width, height, colorData.hex, 1);
-      const shine = this.add.ellipse(0, -4, width * 0.7, height * 0.4, 0xffffff, 0.3);
-      container.add([body, shine]);
-
-      if (!isStart && color !== 'none') {
-        // Jelly bounce animation
+      const cd = color === 'none' ? { hex: 0xdddddd } : C[color];
+      const body = this.add.ellipse(0, 0, w, h, cd.hex);
+      const shine = this.add.ellipse(0, -3, w * 0.65, h * 0.35, 0xffffff, 0.3);
+      vis.add([body, shine]);
+      if (color !== 'none') {
         this.tweens.add({
-          targets: container,
-          scaleY: { from: 1, to: 0.92 },
-          duration: 1200,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
+          targets: vis, scaleY: { from: 1, to: 0.9 },
+          duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
         });
       }
     }
 
-    // Physics body
-    const zone = this.add.zone(x, y, width, height);
-    this.physics.add.existing(zone, true);
-    zone.body.setSize(width, height * 0.6);
-    zone.body.setOffset(-width / 2, -height * 0.3);
-    zone.platformColor = color;
-    zone.isGoal = isGoal;
-    zone.container = container;
-    this.platforms.add(zone);
+    this.platformVisuals.push(vis);
 
+    // Physics zone — same position, slightly thinner for forgiving collision
+    const bodyH = 14;
+    const zone = this.add.zone(x, y, w, bodyH);
+    this.physics.add.existing(zone, true);
+    // No setSize or setOffset — body matches zone exactly, centered at (x, y)
+    zone.platColor = color;
+    zone.isGoal = isGoal;
+    zone.vis = vis;
+    this.platforms.add(zone);
     return zone;
   }
 
-  generatePlatforms() {
-    let y = GAME_HEIGHT - 200;
-    const harder = this.currentStage.harder;
+  // ── Player ──
+  createPlayer(sx, sy) {
+    this.player = this.add.container(sx, sy);
 
-    for (let i = 0; i < PLATFORM_COUNT; i++) {
-      const spacing = Phaser.Math.Between(
-        harder ? PLATFORM_SPACING_MIN + 20 : PLATFORM_SPACING_MIN,
-        harder ? PLATFORM_SPACING_MAX + 30 : PLATFORM_SPACING_MAX
-      );
-      y -= spacing;
-      const x = Phaser.Math.Between(60, GAME_WIDTH - 60);
-      const color = Phaser.Math.RND.pick(PRIMARY_COLORS);
-      this.createPlatform(x, y, color);
-    }
-    this.highestPlatformY = y;
-  }
+    this.slimeBody = this.add.ellipse(0, 0, 38, 32, C.none.hex, 0.85);
+    this.slimeGlow = this.add.ellipse(0, 0, 48, 40, 0xffffff, 0.12);
+    const eL = this.add.ellipse(-9, -5, 9, 12, 0xffffff, 0.95);
+    const eR = this.add.ellipse(9, -5, 9, 12, 0xffffff, 0.95);
+    const pL = this.add.circle(-8, -4, 3.5, 0x222222);
+    const pR = this.add.circle(10, -4, 3.5, 0x222222);
+    const mouth = this.add.ellipse(0, 7, 10, 4, 0x000000, 0.12);
+    this.player.add([this.slimeGlow, this.slimeBody, eL, eR, pL, pR, mouth]);
 
-  createPlayer() {
-    const startX = GAME_WIDTH / 2;
-    const startY = GAME_HEIGHT - 120;
-
-    // Player container
-    this.player = this.add.container(startX, startY);
-
-    // Slime body
-    this.slimeBody = this.add.ellipse(0, 0, 36, 30, COLORS.none.hex, 0.85);
-    // Eyes
-    const eyeL = this.add.ellipse(-8, -4, 8, 10, 0xffffff, 0.95);
-    const eyeR = this.add.ellipse(8, -4, 8, 10, 0xffffff, 0.95);
-    const pupilL = this.add.circle(-7, -3, 3, 0x333333);
-    const pupilR = this.add.circle(9, -3, 3, 0x333333);
-    // Mouth
-    const mouth = this.add.ellipse(0, 6, 12, 5, 0x000000, 0.15);
-    // Glow ring
-    this.slimeGlow = this.add.ellipse(0, 0, 44, 36, 0xffffff, 0.15);
-
-    this.player.add([this.slimeGlow, this.slimeBody, eyeL, eyeR, pupilL, pupilR, mouth]);
-
-    // Physics
     this.physics.world.enable(this.player);
-    this.player.body.setSize(30, 28);
-    this.player.body.setOffset(-15, -14);
-    this.player.body.setGravityY(GRAVITY);
-    this.player.body.setBounce(0);
-    this.player.body.setCollideWorldBounds(false);
-    this.player.body.setMaxVelocity(400, 800);
+    const pb = this.player.body;
+    pb.setSize(34, 20);
+    pb.setOffset(-17, -4);
+    pb.setGravityY(GRAVITY);
+    pb.setBounce(0);
+    pb.setCollideWorldBounds(false);
+    pb.setMaxVelocity(400, 900);
     this.player.setDepth(10);
   }
 
-  setupControls() {
-    // Touch/click to jump, drag left/right to move
-    this.input.on('pointerdown', (pointer) => {
-      if (this.isGameOver) return;
-      if (this.player.body.touching.down || this.hasLanded) {
-        this.doJump();
-      }
-      this.pointerStartX = pointer.x;
-    });
+  // ── Controls ──
+  setupInput() {
+    this.moveDir = 0; // -1, 0, 1
 
-    this.input.on('pointermove', (pointer) => {
-      if (this.isGameOver) return;
-      if (pointer.isDown) {
-        const dx = pointer.x - this.pointerStartX;
-        this.player.body.setVelocityX(dx * 3);
-      }
+    // Touch: left half = go left, right half = go right
+    this.input.on('pointerdown', (p) => {
+      if (this.gameOver) return;
+      this.moveDir = p.x < GW / 2 ? -1 : 1;
     });
-
-    this.input.on('pointerup', () => {
-      if (this.isGameOver) return;
-      this.player.body.setVelocityX(0);
+    this.input.on('pointermove', (p) => {
+      if (this.gameOver || !p.isDown) return;
+      this.moveDir = p.x < GW / 2 ? -1 : 1;
     });
+    this.input.on('pointerup', () => { this.moveDir = 0; });
 
-    // Keyboard
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
   }
 
-  doJump() {
-    this.player.body.setVelocityY(JUMP_VELOCITY);
-    this.hasLanded = false;
+  // ── Landing ──
+  onLand(player, plat) {
+    // Only register landing when falling down
+    if (player.body.velocity.y < 50) return;
 
-    // Squash & stretch
+    // Auto-bounce! (Doodle Jump style)
+    player.body.setVelocityY(JUMP_VEL);
+
+    // Squash & stretch on bounce
+    this.tweens.killTweensOf(this.player);
     this.tweens.add({
       targets: this.player,
-      scaleX: 0.85,
-      scaleY: 1.2,
-      duration: 100,
-      yoyo: true,
-      ease: 'Quad.easeOut',
-    });
-  }
-
-  onPlatformLand(player, platform) {
-    // Only land from above
-    if (player.body.velocity.y <= 0) return;
-
-    this.hasLanded = true;
-
-    // Landing squash
-    this.tweens.add({
-      targets: this.player,
-      scaleX: 1.2,
-      scaleY: 0.8,
-      duration: 80,
-      yoyo: true,
-      ease: 'Quad.easeOut',
+      scaleX: { from: 1.25, to: 1 },
+      scaleY: { from: 0.75, to: 1 },
+      duration: 200, ease: 'Back.easeOut',
     });
 
-    if (platform.isGoal) {
-      this.checkGoal(platform);
+    // Platform bounce visual
+    if (plat.vis) {
+      this.tweens.add({
+        targets: plat.vis,
+        scaleX: { from: 1.2, to: 1 },
+        scaleY: { from: 0.7, to: 1 },
+        duration: 250, ease: 'Back.easeOut',
+      });
+    }
+
+    // Goal check
+    if (plat.isGoal) {
+      this.checkGoal();
       return;
     }
 
-    const platColor = platform.platformColor;
-    if (platColor && platColor !== 'none') {
+    // Color mixing
+    const pc = plat.platColor;
+    if (pc && pc !== 'none') {
       const oldColor = this.playerColor;
-      this.playerColor = mixColors(this.playerColor, platColor);
-      this.updatePlayerColor();
+      this.playerColor = mixColors(this.playerColor, pc);
+      this.updateSlimeColor();
+      this.splashEffect(player.x, player.y + 10, C[pc].hex);
 
-      // Color splash effect
-      this.createColorSplash(player.x, player.y, COLORS[platColor].hex);
-
-      // Platform bounce effect
-      if (platform.container) {
-        this.tweens.add({
-          targets: platform.container,
-          scaleX: 1.3,
-          scaleY: 0.7,
-          duration: 100,
-          yoyo: true,
-        });
-      }
+      // Score for each platform
+      this.score += 10;
+      if (this.scoreText) this.scoreText.setText(`${this.score}`);
     }
-
-    // Auto-jump on land for mobile-friendly play
-    this.time.delayedCall(50, () => {
-      if (this.hasLanded && !this.isGameOver) {
-        // Don't auto-jump, wait for tap
-      }
-    });
   }
 
-  checkGoal(platform) {
-    if (this.playerColor === this.currentStage.target) {
-      // Success!
+  checkGoal() {
+    if (this.gameOver) return;
+    this.gameOver = true;
+
+    const camY = this.cameras.main.scrollY;
+
+    if (this.playerColor === this.stage.target) {
+      // SUCCESS
       this.combo++;
-      this.score += 100 * this.combo;
-      this.createSuccessEffect(this.player.x, this.player.y);
-      this.isGameOver = true;
+      this.score += 200 * this.combo;
+      this.cameras.main.flash(200, 200, 255, 200);
+      this.successBurst(this.player.x, this.player.y);
 
-      // Show success text
-      const successText = this.add.text(GAME_WIDTH / 2, this.player.y - 60, '클리어! ★', {
-        fontSize: '32px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#ffffff',
-        stroke: '#000000',
-        strokeThickness: 4,
+      const t1 = this.add.text(GW / 2, camY + GH * 0.35, `스테이지 ${this.stage.num} 클리어!`, {
+        fontSize: '30px', fontFamily: 'Arial', color: '#fff',
+        stroke: '#000', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(100);
 
-      const scoreText = this.add.text(GAME_WIDTH / 2, this.player.y - 20, `+${100 * this.combo} (x${this.combo} 콤보!)`, {
-        fontSize: '20px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#ffd43b',
-        stroke: '#000000',
-        strokeThickness: 3,
+      const t2 = this.add.text(GW / 2, camY + GH * 0.45, `+${200 * this.combo}점  x${this.combo} 콤보!`, {
+        fontSize: '20px', fontFamily: 'Arial', color: '#ffd43b',
+        stroke: '#000', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(100);
 
-      this.tweens.add({
-        targets: [successText, scoreText],
-        y: '-=30',
-        alpha: 0,
-        duration: 1500,
-        ease: 'Quad.easeOut',
-      });
+      this.tweens.add({ targets: [t1, t2], y: '-=20', alpha: 0, delay: 800, duration: 800 });
 
-      // Next stage
-      this.time.delayedCall(1500, () => {
-        this.scene.restart({
-          stageIndex: this.stageIndex + 1,
-          score: this.score,
-          combo: this.combo,
-        });
+      this.time.delayedCall(1800, () => {
+        this.scene.restart({ stageIdx: this.stageIdx + 1, score: this.score, combo: this.combo });
       });
     } else {
-      // Wrong color — muddy reset
+      // WRONG COLOR
       this.combo = 0;
-      this.playerColor = 'muddy';
-      this.updatePlayerColor();
+      this.cameras.main.shake(200, 0.02);
 
-      const failText = this.add.text(GAME_WIDTH / 2, this.player.y - 50, '색이 안 맞아!', {
-        fontSize: '24px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#ff6b6b',
-        stroke: '#000000',
-        strokeThickness: 3,
+      const t = this.add.text(GW / 2, camY + GH * 0.4, '색이 안 맞아!', {
+        fontSize: '26px', fontFamily: 'Arial', color: '#ff6b6b',
+        stroke: '#000', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(100);
 
-      this.tweens.add({
-        targets: failText,
-        y: '-=40',
-        alpha: 0,
-        duration: 1200,
-      });
+      this.tweens.add({ targets: t, y: '-=30', alpha: 0, duration: 1200 });
 
-      // Reset player color after a moment
       this.time.delayedCall(800, () => {
         this.playerColor = 'none';
-        this.updatePlayerColor();
+        this.updateSlimeColor();
+        this.gameOver = false;
       });
     }
   }
 
-  updatePlayerColor() {
-    const colorData = COLORS[this.playerColor] || COLORS.none;
-    this.slimeBody.setFillStyle(colorData.hex, 0.85);
-    this.slimeGlow.setFillStyle(colorData.hex, 0.2);
-
-    // Update color indicator
-    if (this.colorIndicator) {
-      this.colorIndicator.setFillStyle(colorData.hex);
-    }
-    if (this.colorLabel) {
-      this.colorLabel.setText(colorData.name);
-    }
+  // ── Visuals ──
+  updateSlimeColor() {
+    const cd = C[this.playerColor] || C.none;
+    this.slimeBody.setFillStyle(cd.hex, 0.85);
+    this.slimeGlow.setFillStyle(cd.hex, 0.18);
+    if (this.colorDot) this.colorDot.setFillStyle(cd.hex);
+    if (this.colorName) this.colorName.setText(cd.name);
   }
 
-  createColorSplash(x, y, color) {
-    for (let i = 0; i < 8; i++) {
-      const particle = this.add.circle(x, y, Phaser.Math.Between(3, 7), color, 0.8);
-      particle.setDepth(5);
-      const angle = (Math.PI * 2 * i) / 8;
-      const dist = Phaser.Math.Between(20, 50);
+  splashEffect(x, y, color) {
+    for (let i = 0; i < 10; i++) {
+      const p = this.add.circle(x, y, Phaser.Math.Between(3, 7), color, 0.85);
+      p.setDepth(8);
+      const a = (Math.PI * 2 * i) / 10;
+      const d = Phaser.Math.Between(25, 55);
       this.tweens.add({
-        targets: particle,
-        x: x + Math.cos(angle) * dist,
-        y: y + Math.sin(angle) * dist,
-        alpha: 0,
-        scaleX: 0.2,
-        scaleY: 0.2,
-        duration: 400,
-        ease: 'Quad.easeOut',
-        onComplete: () => particle.destroy(),
+        targets: p,
+        x: x + Math.cos(a) * d,
+        y: y + Math.sin(a) * d,
+        alpha: 0, scaleX: 0.1, scaleY: 0.1,
+        duration: 350, ease: 'Quad.easeOut',
+        onComplete: () => p.destroy(),
       });
     }
   }
 
-  createSuccessEffect(x, y) {
-    // Rainbow burst
-    const rainbowColors = [0xff6b6b, 0xff9f43, 0xffd43b, 0x51cf66, 0x339af0, 0xcc5de8];
-    for (let i = 0; i < 18; i++) {
-      const c = rainbowColors[i % rainbowColors.length];
-      const particle = this.add.circle(x, y, Phaser.Math.Between(3, 8), c, 0.9);
-      particle.setDepth(20);
-      const angle = (Math.PI * 2 * i) / 18;
-      const dist = Phaser.Math.Between(40, 100);
+  successBurst(x, y) {
+    const cols = [0xff6b6b, 0xff922b, 0xffd43b, 0x51cf66, 0x339af0, 0xbe4bdb];
+    for (let i = 0; i < 24; i++) {
+      const c = cols[i % cols.length];
+      const p = this.add.circle(x, y, Phaser.Math.Between(4, 9), c, 0.9);
+      p.setDepth(20);
+      const a = (Math.PI * 2 * i) / 24;
+      const d = Phaser.Math.Between(50, 130);
       this.tweens.add({
-        targets: particle,
-        x: x + Math.cos(angle) * dist,
-        y: y + Math.sin(angle) * dist,
-        alpha: 0,
-        duration: 800,
-        ease: 'Quad.easeOut',
-        onComplete: () => particle.destroy(),
+        targets: p,
+        x: x + Math.cos(a) * d, y: y + Math.sin(a) * d,
+        alpha: 0, duration: 900, ease: 'Quad.easeOut',
+        onComplete: () => p.destroy(),
       });
     }
   }
 
-  createUI(stage) {
-    const targetColor = COLORS[stage.target];
+  // ── UI ──
+  createUI() {
+    const tgt = C[this.stage.target];
 
-    // Top bar background
-    const uiBg = this.add.rectangle(GAME_WIDTH / 2, 30, GAME_WIDTH - 20, 50, 0x000000, 0.3);
-    uiBg.setScrollFactor(0).setDepth(50);
+    // Top bar
+    this.add.rectangle(GW / 2, 28, GW - 16, 48, 0x000000, 0.35).setScrollFactor(0).setDepth(50).setRoundedRectRadius(10);
 
-    // Stage text
-    const stageText = this.add.text(15, 14, `Stage ${stage.stageNum}`, {
-      fontSize: '14px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
+    // Stage
+    this.add.text(14, 12, `Stage ${this.stage.num}`, {
+      fontSize: '15px', fontFamily: 'Arial', color: '#fff', fontStyle: 'bold',
     }).setScrollFactor(0).setDepth(51);
 
-    // Target color display
-    const targetLabel = this.add.text(GAME_WIDTH / 2, 14, '목표:', {
-      fontSize: '14px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
+    // Target
+    this.add.text(GW / 2, 11, '목표', {
+      fontSize: '11px', fontFamily: 'Arial', color: '#ffffffaa',
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51);
 
-    const targetCircle = this.add.circle(GAME_WIDTH / 2 - 20, 40, 10, targetColor.hex);
-    targetCircle.setScrollFactor(0).setDepth(51);
-    const targetName = this.add.text(GAME_WIDTH / 2 - 5, 34, targetColor.name, {
-      fontSize: '13px',
-      fontFamily: 'Arial, sans-serif',
-      color: targetColor.css,
+    this.add.circle(GW / 2 - 18, 36, 9, tgt.hex).setScrollFactor(0).setDepth(51);
+    this.add.text(GW / 2 - 4, 29, tgt.name, {
+      fontSize: '14px', fontFamily: 'Arial', color: tgt.css, fontStyle: 'bold',
     }).setScrollFactor(0).setDepth(51);
 
     // Score
-    this.scoreText = this.add.text(GAME_WIDTH - 15, 14, `점수: ${this.score}`, {
-      fontSize: '14px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
+    this.scoreText = this.add.text(GW - 14, 12, `${this.score}`, {
+      fontSize: '16px', fontFamily: 'Arial', color: '#ffd43b', fontStyle: 'bold',
     }).setOrigin(1, 0).setScrollFactor(0).setDepth(51);
 
-    // Current color indicator (bottom)
-    const bottomBg = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT - 25, 140, 36, 0x000000, 0.3);
-    bottomBg.setScrollFactor(0).setDepth(50);
+    this.add.text(GW - 14, 32, '점수', {
+      fontSize: '10px', fontFamily: 'Arial', color: '#ffffffaa',
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(51);
 
-    const myLabel = this.add.text(GAME_WIDTH / 2 - 55, GAME_HEIGHT - 33, '내 색:', {
-      fontSize: '13px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
+    // Bottom: current color
+    this.add.rectangle(GW / 2, GH - 28, 150, 38, 0x000000, 0.35).setScrollFactor(0).setDepth(50).setRoundedRectRadius(10);
+
+    this.add.text(GW / 2 - 60, GH - 38, '내 색:', {
+      fontSize: '13px', fontFamily: 'Arial', color: '#fff',
     }).setScrollFactor(0).setDepth(51);
 
-    this.colorIndicator = this.add.circle(GAME_WIDTH / 2 + 5, GAME_HEIGHT - 25, 10, COLORS.none.hex);
-    this.colorIndicator.setScrollFactor(0).setDepth(51);
+    this.colorDot = this.add.circle(GW / 2 + 8, GH - 28, 9, C.none.hex);
+    this.colorDot.setScrollFactor(0).setDepth(51);
 
-    this.colorLabel = this.add.text(GAME_WIDTH / 2 + 20, GAME_HEIGHT - 32, COLORS.none.name, {
-      fontSize: '13px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#cccccc',
+    this.colorName = this.add.text(GW / 2 + 22, GH - 35, C.none.name, {
+      fontSize: '13px', fontFamily: 'Arial', color: '#ddd',
     }).setScrollFactor(0).setDepth(51);
 
-    // Hint text
-    const hint = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 60, `힌트: ${stage.hint}`, {
-      fontSize: '12px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
-      alpha: 0.5,
+    // Hint (fades out)
+    const hint = this.add.text(GW / 2, GH - 65, `힌트: ${this.stage.hint}`, {
+      fontSize: '12px', fontFamily: 'Arial', color: '#fff', alpha: 0.6,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(51);
+    this.tweens.add({ targets: hint, alpha: 0, delay: 3000, duration: 1000 });
 
-    this.tweens.add({
-      targets: hint,
-      alpha: 0,
-      delay: 3000,
-      duration: 1000,
-    });
+    // Left/Right arrows (mobile helper)
+    const arrowStyle = { fontSize: '28px', color: '#ffffff55' };
+    this.add.text(30, GH / 2, '◀', arrowStyle).setOrigin(0.5).setScrollFactor(0).setDepth(40);
+    this.add.text(GW - 30, GH / 2, '▶', arrowStyle).setOrigin(0.5).setScrollFactor(0).setDepth(40);
   }
 
+  // ── Update ──
   update() {
-    if (this.isGameOver) return;
+    if (this.gameOver) return;
 
-    // Keyboard movement
+    const pb = this.player.body;
+
+    // Horizontal movement
+    let vx = 0;
     if (this.cursors.left.isDown) {
-      this.player.body.setVelocityX(-MOVE_SPEED);
+      vx = -MOVE_SPEED;
     } else if (this.cursors.right.isDown) {
-      this.player.body.setVelocityX(MOVE_SPEED);
+      vx = MOVE_SPEED;
+    } else if (this.moveDir !== 0) {
+      vx = this.moveDir * MOVE_SPEED;
     }
-
-    // Keyboard jump
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey) || Phaser.Input.Keyboard.JustDown(this.cursors.up)) {
-      if (this.hasLanded) {
-        this.doJump();
-      }
-    }
+    pb.setVelocityX(vx);
 
     // Wrap horizontally
-    if (this.player.x < -20) this.player.x = GAME_WIDTH + 20;
-    if (this.player.x > GAME_WIDTH + 20) this.player.x = -20;
+    if (this.player.x < -15) this.player.x = GW + 15;
+    if (this.player.x > GW + 15) this.player.x = -15;
 
-    // Fall death
-    const camBottom = this.cameras.main.scrollY + GAME_HEIGHT;
-    if (this.player.y > camBottom + 50) {
-      this.gameOver();
+    // Camera: only scroll UP (never down)
+    const targetY = this.player.y - GH * 0.55;
+    if (targetY < this.cameraMinY) {
+      this.cameraMinY = Phaser.Math.Linear(this.cameraMinY, targetY, 0.08);
     }
+    this.cameras.main.scrollY = this.cameraMinY;
 
-    // Update score display
-    if (this.scoreText) {
-      this.scoreText.setText(`점수: ${this.score}`);
+    // Fall death: below camera bottom
+    if (this.player.y > this.cameras.main.scrollY + GH + 60) {
+      this.die();
     }
   }
 
-  gameOver() {
-    if (this.isGameOver) return;
-    this.isGameOver = true;
+  die() {
+    if (this.gameOver) return;
+    this.gameOver = true;
     this.combo = 0;
+    this.cameras.main.flash(300, 255, 80, 80);
 
-    // Screen flash
-    this.cameras.main.flash(300, 255, 100, 100);
+    const cy = this.cameras.main.scrollY + GH / 2;
 
-    const goText = this.add.text(GAME_WIDTH / 2, this.cameras.main.scrollY + GAME_HEIGHT / 2 - 30, '떨어졌다!', {
-      fontSize: '36px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ff6b6b',
-      stroke: '#000000',
-      strokeThickness: 4,
+    this.add.rectangle(GW / 2, cy, GW, GH, 0x000000, 0.4).setDepth(90);
+
+    this.add.text(GW / 2, cy - 40, '떨어졌다!', {
+      fontSize: '38px', fontFamily: 'Arial', color: '#ff6b6b',
+      stroke: '#000', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(100);
 
-    const finalScore = this.add.text(GAME_WIDTH / 2, this.cameras.main.scrollY + GAME_HEIGHT / 2 + 20, `점수: ${this.score}`, {
-      fontSize: '22px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
-      stroke: '#000000',
-      strokeThickness: 3,
+    this.add.text(GW / 2, cy + 10, `점수: ${this.score}`, {
+      fontSize: '22px', fontFamily: 'Arial', color: '#fff',
+      stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(100);
 
-    const retry = this.add.text(GAME_WIDTH / 2, this.cameras.main.scrollY + GAME_HEIGHT / 2 + 60, '탭하여 재시작', {
-      fontSize: '18px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffd43b',
+    const retry = this.add.text(GW / 2, cy + 60, '탭하여 재시작', {
+      fontSize: '18px', fontFamily: 'Arial', color: '#ffd43b',
     }).setOrigin(0.5).setDepth(100);
+    this.tweens.add({ targets: retry, alpha: 0.3, duration: 500, yoyo: true, repeat: -1 });
 
-    this.tweens.add({
-      targets: retry,
-      alpha: 0.3,
-      duration: 600,
-      yoyo: true,
-      repeat: -1,
-    });
-
-    this.time.delayedCall(800, () => {
+    this.time.delayedCall(600, () => {
       this.input.once('pointerdown', () => {
-        this.scene.restart({ stageIndex: this.stageIndex, score: 0, combo: 0 });
+        this.scene.restart({ stageIdx: this.stageIdx, score: 0, combo: 0 });
+      });
+      this.input.keyboard.once('keydown-SPACE', () => {
+        this.scene.restart({ stageIdx: this.stageIdx, score: 0, combo: 0 });
       });
     });
   }
 }
 
+// ─── TITLE SCENE ───
 class TitleScene extends Phaser.Scene {
-  constructor() {
-    super({ key: 'TitleScene' });
-  }
+  constructor() { super('TitleScene'); }
 
   create() {
-    // Background
-    const bg = this.add.graphics();
-    for (let i = 0; i < GAME_HEIGHT; i++) {
-      const t = i / GAME_HEIGHT;
-      const r = Phaser.Math.Interpolation.Linear([224, 142], t);
-      const g = Phaser.Math.Interpolation.Linear([195, 197], t);
-      const b = Phaser.Math.Interpolation.Linear([252, 252], t);
-      bg.fillStyle(Phaser.Display.Color.GetColor(r, g, b), 1);
-      bg.fillRect(0, i, GAME_WIDTH, 1);
+    // BG gradient
+    const g = this.add.graphics();
+    for (let i = 0; i < GH; i++) {
+      const t = i / GH;
+      const r = Math.round(Phaser.Math.Interpolation.Linear([224, 142], t));
+      const gv = Math.round(Phaser.Math.Interpolation.Linear([195, 197], t));
+      const b = Math.round(Phaser.Math.Interpolation.Linear([252, 252], t));
+      g.fillStyle(Phaser.Display.Color.GetColor(r, gv, b));
+      g.fillRect(0, i, GW, 1);
     }
 
-    // Floating color circles
-    const demoColors = [0xff6b6b, 0xffd43b, 0x339af0, 0xcc5de8, 0xff9f43, 0x51cf66];
-    for (let i = 0; i < 12; i++) {
-      const c = demoColors[i % demoColors.length];
-      const circle = this.add.circle(
-        Phaser.Math.Between(30, GAME_WIDTH - 30),
-        Phaser.Math.Between(100, GAME_HEIGHT - 100),
-        Phaser.Math.Between(10, 30),
-        c, 0.2
+    // Floating circles
+    const dcols = [0xff6b6b, 0xffd43b, 0x339af0, 0xbe4bdb, 0xff922b, 0x51cf66];
+    for (let i = 0; i < 15; i++) {
+      const c = this.add.circle(
+        Phaser.Math.Between(20, GW - 20),
+        Phaser.Math.Between(60, GH - 60),
+        Phaser.Math.Between(12, 35),
+        dcols[i % dcols.length], 0.18
       );
       this.tweens.add({
-        targets: circle,
-        y: circle.y + Phaser.Math.Between(-40, 40),
-        x: circle.x + Phaser.Math.Between(-20, 20),
-        duration: Phaser.Math.Between(2000, 4000),
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
+        targets: c,
+        y: c.y + Phaser.Math.Between(-50, 50),
+        x: c.x + Phaser.Math.Between(-25, 25),
+        duration: Phaser.Math.Between(2500, 5000),
+        yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
     }
 
     // Title
-    const title = this.add.text(GAME_WIDTH / 2, 200, 'Color Mix\nJump', {
-      fontSize: '52px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
-      stroke: '#cc5de8',
-      strokeThickness: 5,
-      align: 'center',
-      lineSpacing: 8,
+    const title = this.add.text(GW / 2, 185, 'Color Mix\nJump', {
+      fontSize: '54px', fontFamily: 'Arial', color: '#fff',
+      stroke: '#be4bdb', strokeThickness: 6, align: 'center', lineSpacing: 10,
     }).setOrigin(0.5);
-
     this.tweens.add({
-      targets: title,
-      scaleX: 1.05,
-      scaleY: 1.05,
-      duration: 1500,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
+      targets: title, scaleX: 1.04, scaleY: 1.04,
+      duration: 1800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
 
-    // Subtitle
-    this.add.text(GAME_WIDTH / 2, 310, '색깔을 섞어 목표 색상을 만들어요!', {
-      fontSize: '15px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
-      alpha: 0.8,
+    this.add.text(GW / 2, 300, '색깔 발판을 밟아 목표 색상을 만들어요!', {
+      fontSize: '14px', fontFamily: 'Arial', color: '#ffffffcc',
     }).setOrigin(0.5);
 
-    // Color mixing demo
-    const demoY = 380;
-    this.add.circle(GAME_WIDTH / 2 - 60, demoY, 16, COLORS.red.hex);
-    this.add.text(GAME_WIDTH / 2 - 30, demoY - 6, '+', { fontSize: '18px', color: '#fff' }).setOrigin(0.5);
-    this.add.circle(GAME_WIDTH / 2, demoY, 16, COLORS.blue.hex);
-    this.add.text(GAME_WIDTH / 2 + 30, demoY - 6, '=', { fontSize: '18px', color: '#fff' }).setOrigin(0.5);
-    this.add.circle(GAME_WIDTH / 2 + 60, demoY, 16, COLORS.purple.hex);
+    // Color demo
+    const dy = 365;
+    this.add.circle(GW / 2 - 65, dy, 18, C.red.hex);
+    this.add.text(GW / 2 - 33, dy - 8, '+', { fontSize: '20px', color: '#fff' }).setOrigin(0.5);
+    this.add.circle(GW / 2, dy, 18, C.blue.hex);
+    this.add.text(GW / 2 + 33, dy - 8, '=', { fontSize: '20px', color: '#fff' }).setOrigin(0.5);
+    this.add.circle(GW / 2 + 65, dy, 18, C.purple.hex);
 
-    // Slime character preview
-    const slime = this.add.ellipse(GAME_WIDTH / 2, 470, 50, 40, 0xcc5de8, 0.8);
-    const eyeL = this.add.ellipse(GAME_WIDTH / 2 - 10, 464, 10, 13, 0xffffff, 0.95);
-    const eyeR = this.add.ellipse(GAME_WIDTH / 2 + 10, 464, 10, 13, 0xffffff, 0.95);
-    this.add.circle(GAME_WIDTH / 2 - 9, 465, 4, 0x333333);
-    this.add.circle(GAME_WIDTH / 2 + 11, 465, 4, 0x333333);
-
+    // Slime preview
+    const sy = 450;
+    const slime = this.add.ellipse(GW / 2, sy, 52, 42, 0xbe4bdb, 0.85);
+    this.add.ellipse(GW / 2 - 11, sy - 6, 10, 14, 0xffffff, 0.95);
+    this.add.ellipse(GW / 2 + 11, sy - 6, 10, 14, 0xffffff, 0.95);
+    this.add.circle(GW / 2 - 10, sy - 5, 4, 0x222222);
+    this.add.circle(GW / 2 + 12, sy - 5, 4, 0x222222);
     this.tweens.add({
-      targets: [slime, eyeL, eyeR],
-      y: '-=12',
-      duration: 600,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Quad.easeOut',
+      targets: slime, y: sy - 15,
+      duration: 600, yoyo: true, repeat: -1, ease: 'Quad.easeOut',
     });
 
     // Start button
-    const startBtn = this.add.rectangle(GAME_WIDTH / 2, 560, 180, 50, 0xcc5de8, 0.9);
-    const startText = this.add.text(GAME_WIDTH / 2, 560, '시작하기', {
-      fontSize: '22px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
-      fontStyle: 'bold',
+    const btn = this.add.rectangle(GW / 2, 545, 200, 54, 0xbe4bdb, 0.9).setInteractive({ useHandCursor: true });
+    btn.postFX?.addShine?.(0.3);
+    this.add.text(GW / 2, 545, '시작하기 ▶', {
+      fontSize: '22px', fontFamily: 'Arial', color: '#fff', fontStyle: 'bold',
     }).setOrigin(0.5);
-
     this.tweens.add({
-      targets: [startBtn, startText],
-      scaleX: 1.05,
-      scaleY: 1.05,
-      duration: 800,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
+      targets: btn, scaleX: 1.06, scaleY: 1.06,
+      duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
+
+    const startGame = () => this.scene.start('GameScene', { stageIdx: 0, score: 0, combo: 0 });
+    btn.on('pointerdown', startGame);
+    this.input.keyboard.on('keydown-SPACE', startGame);
 
     // Controls hint
-    this.add.text(GAME_WIDTH / 2, 620, '탭: 점프 | 드래그: 이동 | ← →: 이동', {
-      fontSize: '12px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
-      alpha: 0.5,
+    this.add.text(GW / 2, 600, '화면 왼쪽/오른쪽 터치로 이동 | 자동 점프!', {
+      fontSize: '11px', fontFamily: 'Arial', color: '#ffffff88',
     }).setOrigin(0.5);
 
-    // Credit
-    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 20, '🐰 츄릭핑 + 🦊 그림핑 + 🐥 막내핑', {
-      fontSize: '11px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
-      alpha: 0.4,
+    // Credits
+    this.add.text(GW / 2, GH - 18, '🐰 츄릭핑 + 🦊 그림핑 + 🐥 막내핑', {
+      fontSize: '11px', fontFamily: 'Arial', color: '#ffffff66',
     }).setOrigin(0.5);
-
-    startBtn.setInteractive({ useHandCursor: true });
-    startBtn.on('pointerdown', () => {
-      this.scene.start('GameScene', { stageIndex: 0, score: 0, combo: 0 });
-    });
-
-    this.input.keyboard.on('keydown-SPACE', () => {
-      this.scene.start('GameScene', { stageIndex: 0, score: 0, combo: 0 });
-    });
   }
 }
 
-// Phaser config
-const config = {
+// ─── CONFIG ───
+new Phaser.Game({
   type: Phaser.AUTO,
-  width: GAME_WIDTH,
-  height: GAME_HEIGHT,
+  width: GW,
+  height: GH,
   parent: 'game-container',
   backgroundColor: '#1a1a2e',
   physics: {
     default: 'arcade',
-    arcade: {
-      gravity: { y: 0 },
-      debug: false,
-    },
+    arcade: { gravity: { y: 0 }, debug: false },
   },
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   scene: [TitleScene, GameScene],
-};
-
-const game = new Phaser.Game(config);
+});
 </script>
 </body>
 </html>
