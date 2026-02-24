@@ -21,9 +21,9 @@ canvas { display: block; max-width: 100%; max-height: 100%; }
 const GW = 400;
 const GH = 700;
 const PLAT_COUNT = 10;
-const JUMP_VEL = -620;
-const GRAVITY = 900;
-const MOVE_SPEED = 280;
+const JUMP_VEL = -680;
+const GRAVITY = 850;
+const MOVE_SPEED = 300;
 
 // RYB color system
 const C = {
@@ -80,20 +80,28 @@ class GameScene extends Phaser.Scene {
     this.platformVisuals = [];
 
     // Starting platform (wide, neutral)
-    this.addPlatform(GW / 2, GH - 80, 'none', 130);
+    this.addPlatform(GW / 2, GH - 80, 'none', 140);
 
-    // Generate colored platforms going up
+    // Generate colored platforms going up (수평 도달 가능성 보장)
     this.topPlatY = GH - 80;
+    let prevX = GW / 2;
+    const MAX_DX = 130; // 수평 최대 거리 제약
     for (let i = 0; i < PLAT_COUNT; i++) {
-      const gap = this.stage.hard ? Phaser.Math.Between(100, 145) : Phaser.Math.Between(85, 125);
+      const gap = this.stage.hard ? Phaser.Math.Between(80, 120) : Phaser.Math.Between(70, 105);
       this.topPlatY -= gap;
-      const px = Phaser.Math.Between(55, GW - 55);
-      this.addPlatform(px, this.topPlatY, Phaser.Math.RND.pick(PRIMARIES), 80);
+      const minX = Math.max(55, prevX - MAX_DX);
+      const maxX = Math.min(GW - 55, prevX + MAX_DX);
+      const px = Phaser.Math.Between(minX, maxX);
+      prevX = px;
+      this.addPlatform(px, this.topPlatY, Phaser.Math.RND.pick(PRIMARIES), 90);
     }
 
-    // Goal platform
-    this.topPlatY -= 130;
-    this.goalPlat = this.addPlatform(GW / 2, this.topPlatY, 'goal', 110);
+    // Goal platform (도달 가능 범위 내 배치)
+    this.topPlatY -= 110;
+    const goalX = Phaser.Math.Clamp(
+      Phaser.Math.Between(prevX - MAX_DX, prevX + MAX_DX), 55, GW - 55
+    );
+    this.goalPlat = this.addPlatform(goalX, this.topPlatY, 'goal', 120);
 
     // Player
     this.createPlayer(GW / 2, GH - 115);
