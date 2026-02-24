@@ -69,6 +69,7 @@ class GameScene extends Phaser.Scene {
   create() {
     this.stage = STAGES[this.stageIdx % STAGES.length];
     this.playerColor = 'none';
+    this.colorLocked = false; // 목표색 달성 시 색상 잠금
     this.gameOver = false;
     this.cameraMinY = 0; // camera only scrolls up
 
@@ -82,10 +83,24 @@ class GameScene extends Phaser.Scene {
     // Starting platform (wide, neutral)
     this.addPlatform(GW / 2, GH - 80, 'none', 140);
 
-    // Generate colored platforms going up (수평 도달 가능성 보장)
+    // Generate colored platforms going up (수평 도달 가능성 + 색상 보장)
     this.topPlatY = GH - 80;
     let prevX = GW / 2;
     const MAX_DX = 130; // 수평 최대 거리 제약
+
+    // 목표색에 필요한 두 원색 보장
+    const needed = { 'purple': ['red','blue'], 'orange': ['red','yellow'], 'green': ['blue','yellow'] };
+    const req = needed[this.stage.target] || ['red','blue'];
+    const colors = [];
+    for (let i = 0; i < PLAT_COUNT; i++) colors.push(Phaser.Math.RND.pick(PRIMARIES));
+    // 필요한 원색이 없으면 랜덤 위치에 강제 삽입
+    if (!colors.includes(req[0])) colors[Phaser.Math.Between(0, PLAT_COUNT - 1)] = req[0];
+    if (!colors.includes(req[1])) {
+      let idx;
+      do { idx = Phaser.Math.Between(0, PLAT_COUNT - 1); } while (colors[idx] === req[0]);
+      colors[idx] = req[1];
+    }
+
     for (let i = 0; i < PLAT_COUNT; i++) {
       const gap = this.stage.hard ? Phaser.Math.Between(80, 120) : Phaser.Math.Between(70, 105);
       this.topPlatY -= gap;
@@ -93,7 +108,7 @@ class GameScene extends Phaser.Scene {
       const maxX = Math.min(GW - 55, prevX + MAX_DX);
       const px = Phaser.Math.Between(minX, maxX);
       prevX = px;
-      this.addPlatform(px, this.topPlatY, Phaser.Math.RND.pick(PRIMARIES), 90);
+      this.addPlatform(px, this.topPlatY, colors[i], 90);
     }
 
     // Goal platform (도달 가능 범위 내 배치)
@@ -253,7 +268,7 @@ class GameScene extends Phaser.Scene {
   canLand(player, plat) {
     // Only collide when falling down (Arcade separates BEFORE collideCallback,
     // so velocity.y is still the pre-separation value here)
-    return player.body.velocity.y > 0;
+    return player.body.velocity.y >= 0;
   }
 
   // ── Landing ──
@@ -289,15 +304,35 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Color mixing
+    // Color mixing (skip if color is locked = target achieved)
     const pc = plat.platColor;
     if (pc && pc !== 'none') {
-      const oldColor = this.playerColor;
-      this.playerColor = mixColors(this.playerColor, pc);
-      this.updateSlimeColor();
-      this.splashEffect(player.x, player.y + 10, C[pc].hex);
+      if (this.colorLocked) {
+        // 목표색 달성 상태 — 색 변하지 않음, 이펙트만
+        this.splashEffect(player.x, player.y + 10, C[pc].hex);
+      } else {
+        const newColor = mixColors(this.playerColor, pc);
+        this.playerColor = newColor;
+        this.updateSlimeColor();
+        this.splashEffect(player.x, player.y + 10, C[pc].hex);
 
-      // Score for each platform
+        // 목표색 달성 체크
+        if (newColor === this.stage.target) {
+          this.colorLocked = true;
+          const msg = this.add.text(player.x, player.y - 30, '목표색 완성!', {
+            fontSize: '16px', fontFamily: 'Arial', color: '#ffd43b',
+            stroke: '#000', strokeThickness: 3,
+          }).setOrigin(0.5).setDepth(50);
+          this.tweens.add({ targets: msg, y: msg.y - 40, alpha: 0, duration: 1000, onComplete: () => msg.destroy() });
+        } else if (newColor === 'muddy') {
+          this.cameras.main.shake(150, 0.01);
+          const warn = this.add.text(player.x, player.y - 30, '색이 탁해졌다!', {
+            fontSize: '14px', fontFamily: 'Arial', color: '#ff6b6b',
+            stroke: '#000', strokeThickness: 2,
+          }).setOrigin(0.5).setDepth(50);
+          this.tweens.add({ targets: warn, y: warn.y - 35, alpha: 0, duration: 900, onComplete: () => warn.destroy() });
+        }
+      }
       this.score += 10;
       if (this.scoreText) this.scoreText.setText(`${this.score}`);
     }
@@ -345,6 +380,7 @@ class GameScene extends Phaser.Scene {
 
       this.time.delayedCall(800, () => {
         this.playerColor = 'none';
+        this.colorLocked = false;
         this.updateSlimeColor();
         this.gameOver = false;
       });
