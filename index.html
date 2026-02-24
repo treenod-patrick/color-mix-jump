@@ -251,14 +251,15 @@ class GameScene extends Phaser.Scene {
 
   // ── One-way platform check (processCallback) ──
   canLand(player, plat) {
-    // Only collide when falling down AND player bottom is near/above platform top
-    return player.body.velocity.y > 0 && player.body.bottom <= plat.body.top + 12;
+    // Only collide when falling down (Arcade separates BEFORE collideCallback,
+    // so velocity.y is still the pre-separation value here)
+    return player.body.velocity.y > 0;
   }
 
   // ── Landing ──
   onLand(player, plat) {
-    // Extra safety: only bounce when actually falling
-    if (player.body.velocity.y < 10) return;
+    // canLand already verified we were falling; after separation velocity.y = 0
+    // so we must NOT re-check velocity here
 
     // Auto-bounce! (Doodle Jump style)
     player.body.setVelocityY(JUMP_VEL);
