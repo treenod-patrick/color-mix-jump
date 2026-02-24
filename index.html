@@ -98,8 +98,8 @@ class GameScene extends Phaser.Scene {
     // Player
     this.createPlayer(GW / 2, GH - 115);
 
-    // Collider
-    this.physics.add.collider(this.player, this.platforms, this.onLand, null, this);
+    // Collider — one-way platforms: only collide when player is falling down
+    this.physics.add.collider(this.player, this.platforms, this.onLand, this.canLand, this);
 
     // Controls
     this.setupInput();
@@ -241,10 +241,16 @@ class GameScene extends Phaser.Scene {
     this.cursors = this.input.keyboard.createCursorKeys();
   }
 
+  // ── One-way platform check (processCallback) ──
+  canLand(player, plat) {
+    // Only collide when falling down AND player bottom is near/above platform top
+    return player.body.velocity.y > 0 && player.body.bottom <= plat.body.top + 12;
+  }
+
   // ── Landing ──
   onLand(player, plat) {
-    // Only register landing when falling down
-    if (player.body.velocity.y < 50) return;
+    // Extra safety: only bounce when actually falling
+    if (player.body.velocity.y < 10) return;
 
     // Auto-bounce! (Doodle Jump style)
     player.body.setVelocityY(JUMP_VEL);
@@ -460,7 +466,7 @@ class GameScene extends Phaser.Scene {
     // Camera: only scroll UP (never down)
     const targetY = this.player.y - GH * 0.55;
     if (targetY < this.cameraMinY) {
-      this.cameraMinY = Phaser.Math.Linear(this.cameraMinY, targetY, 0.08);
+      this.cameraMinY = Phaser.Math.Linear(this.cameraMinY, targetY, 0.13);
     }
     this.cameras.main.scrollY = this.cameraMinY;
 
